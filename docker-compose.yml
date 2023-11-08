@@ -16,9 +16,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: node server.js -p 80 --mongoServer mongo --waitForDatabase 5000
+    command: node server.js -p 8080 --mongoServer mongo --waitForDatabase 5000
     ports:
-      - '80:80'
+      - '8080:8080'
     volumes:
       - './assets:/usr/src/app/assets'
       - './js:/usr/src/app/js'
