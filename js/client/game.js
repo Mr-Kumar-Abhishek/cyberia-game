@@ -82,27 +82,52 @@ Game.makeIDmap = function(collection,map){
 };
 
 Game.create = function() {
+    Game.entities = this.add.container();
+    Game.entities.setDepth(3);
+    
+    Game.scenery = this.add.container();
+    Game.scenery.setDepth(1);
+    
     Game.displayMap.call(this);
 
-    // Setup camera controls so the user can pan around the new Phase 2 map
-    var cursors = this.input.keyboard.createCursorKeys();
-    var controlConfig = {
-        camera: this.cameras.main,
-        left: cursors.left,
-        right: cursors.right,
-        up: cursors.up,
-        down: cursors.down,
-        acceleration: 0.06,
-        drag: 0.0005,
-        maxSpeed: 1.0
-    };
-    this.controls = new Phaser.Cameras.Controls.SmoothedKeyControl(controlConfig);
+    Game.HUD = this.add.container();
+    Game.HUD.setScrollFactor(0);
+    Game.HUD.setDepth(5);
+    
+    Game.createMarker();
 
-    this.add.text(10, 10, "Phase 2 Complete: Tilemap loaded! Use Arrow Keys to pan.", { fill: "#fff", backgroundColor: "#000" }).setScrollFactor(0);
+    // The user has initiated Phase 4, we request the initialization data from the server.
+    Client.requestData();
 };
 
 Game.update = function(time, delta) {
-    if (this.controls) this.controls.update(delta);
+    if(!Game.playerIsInitialized) return;
+    
+    var pointer = this.input.activePointer;
+    var cell = Game.computeTileCoords(pointer.worldX, pointer.worldY);
+    Game.markerPosition.x = cell.x * Game.map.tileWidth;
+    Game.markerPosition.y = cell.y * Game.map.tileWidth;
+
+    if(Game.chatInput && Game.chatInput.visible && !Game.chatInput.isFocused) {
+        // chat input handling handled via DOM element now
+    }
+
+    if(Game.player && Game.player.hasMoved && Game.player.hasMoved()) {
+        Game.checkCameraBounds();
+    }
+
+    if(Game.markerHasMoved()) {
+        Game.computeView();
+        Game.marker.visible = (Game.marker.canSee && Game.view.contains(Game.markerPosition.x,Game.markerPosition.y));
+
+        if (Game.marker.visible) {
+            var collide = false;
+            if(Game.collisionArray[cell.y] && Game.collisionArray[cell.y][cell.x] === 1) collide = true;
+            Game.updateMarker(Game.markerPosition.x, Game.markerPosition.y, collide);
+            Game.previousMarkerPosition.x = Game.markerPosition.x;
+            Game.previousMarkerPosition.y = Game.markerPosition.y;
+        }
+    }
 };
 
 
@@ -168,39 +193,39 @@ Game.traverseUpdateObject = function(obj,table,callback){
 };
 
 // CREATION CODE
-// These functions are supposed to return a sprite, whether by creating one from scratch, recycling and old one or
-// fetching the appropriate already existing one, based on the info in the 'data' packer from the server
-Game.createMonster = function(data){ // data contains the data from the server on the new entity to create
-    var monster = (Game.monstersTable[data.id] ?
-            Game.monstersTable[data.id] :
-            Game.monsterFactory.next(data.x * Game.map.tileWidth, data.y * Game.map.tileHeight, 'atlas4')
-    );
+Game.createMonster = function(data){
+    var monster;
+    if (Game.monstersTable[data.id]) {
+        monster = Game.monstersTable[data.id];
+    } else {
+        monster = new window.Monster(data.x * Game.map.tileWidth, data.y * Game.map.tileHeight, 'atlas4');
+    }
     monster.setUp(Game.monstersIDmap[data.monster]);
     Game.updateMonsterStatus(monster,data);
     Game.updateMonsterAction(monster,data);
     return monster;
 };
 
-Game.createItem = function(data) { // data contains the data from the server on the new entity to create
+Game.createItem = function(data) {
     var item;
     if(Game.itemsTable[data.id]) {
-        item = Game.itemsTable[data.id]
+        item = Game.itemsTable[data.id];
     }else{
-        item = Game.itemFactory.next(data.x * Game.map.tileWidth, data.y * Game.map.tileHeight, 'atlas3');
+        item = new window.Item(data.x * Game.map.tileWidth, data.y * Game.map.tileHeight, 'atlas3');
         item.setUp(Game.itemsIDmap[data.itemID], data.chest, data.inChest, data.visible, data.respawn, data.loot);
     }
     Game.updateItem(item,data);
     return item;
 };
 
-Game.createPlayer = function(data){ // data contains the data from the server on the new entity to create
+Game.createPlayer = function(data){
     var player;
     if(Game.charactersPool[data.id]){
         player = Game.charactersPool[data.id];
     }else{
         player = Game.newPlayer(data.x,data.y,data.id);
     }
-    if(!data.alive) player.visible = false;
+    if(!data.alive) player.setVisible(false);
     Game.setUpPlayer(player,data);
     Game.updatePlayerStatus(player,data);
     Game.updatePlayerAction(player,data);
@@ -208,7 +233,7 @@ Game.createPlayer = function(data){ // data contains the data from the server on
 };
 
 Game.newPlayer = function(x,y,id){
-    var player = Game.playerFactory.next(x*Game.map.tileWidth,y*Game.map.tileHeight,'atlas3');
+    var player = new window.Player(x * Game.map.tileWidth, y * Game.map.tileHeight, 'atlas3');
     player.orientation = Game.defaultOrientation;
     player.id = id;
     Game.entities.add(player);
@@ -217,27 +242,73 @@ Game.newPlayer = function(x,y,id){
     return player;
 };
 
-Game.setUpPlayer = function(player,data){ // data contains the data from the server on the new entity to create
+Game.setUpPlayer = function(player,data){
     player.setName(data.name);
     player.speed = Game.playerSpeed;
     player.orientation = Game.defaultOrientation;
 };
 
-Game.fadeInTween = function(object){ // Fade-in effect used to spawn items and monsters
-    object.alpha = 0;
-    var tween = game.add.tween(object);
-    tween.to({alpha: 1}, Phaser.Timer.SECOND/2);
-    tween.start();
+Game.fadeInTween = function(object){
+    object.setAlpha(0);
+    Game.scene.tweens.add({
+        targets: object,
+        alpha: 1,
+        duration: 500
+    });
 };
 
 // UPDATE CODE
+
+Game.updateWorld = function(data) {
+    if (data.newplayers) data.newplayers.forEach(function(p){ Game.createPlayer(p); });
+    if (data.players) {
+        data.players.forEach(function(p){
+            var player = Game.charactersPool[p.id];
+            if (player) {
+                Game.updatePlayerStatus(player, p);
+                Game.updatePlayerAction(player, p);
+            }
+        });
+    }
+    if (data.disconnected) {
+        data.disconnected.forEach(function(id) {
+            Game.removePlayer(Game.charactersPool[id], true);
+        });
+    }
+    if (data.newmonsters) data.newmonsters.forEach(function(m) { Game.createMonster(m); });
+    if (data.monsters) {
+        data.monsters.forEach(function(m) {
+            var monster = Game.monstersTable[m.id];
+            if (monster) {
+                Game.updateMonsterStatus(monster, m);
+                Game.updateMonsterAction(monster, m);
+            }
+        });
+    }
+    if (data.newitems) data.newitems.forEach(function(i) { Game.createItem(i); });
+    if (data.items) {
+        data.items.forEach(function(i) {
+            var item = Game.itemsTable[i.id];
+            if (item) Game.updateItem(item, i);
+        });
+    }
+    if (data.removeditems) {
+        data.removeditems.forEach(function(id) {
+            var item = Game.itemsTable[id];
+            if(item) {
+                item.remove();
+                delete Game.itemsTable[id];
+            }
+        });
+    }
+};
 
 Game.updatePlayerStatus = function(player,info){ // info contains the updated data from the server
     if(info.connected == false){
         Game.removePlayer(player,true);
         return;
     }
-    if(info.x && info.y) player.position.set(info.x*Game.map.tileWidth, info.y*Game.map.tileHeight);
+    if(info.x && info.y) player.setPosition(info.x*Game.map.tileWidth, info.y*Game.map.tileHeight);
 
     if(info.aoi){ // Update the id of the AOI that the player is in
         player.aoi = info.aoi;
@@ -298,7 +369,7 @@ Game.updateMonsterStatus = function(monster,info){ // info contains the updated 
         monster.delayedDeath(500);
         return;
     }
-    if(info.x && info.y) monster.position.set(info.x*Game.map.tileWidth,info.y*Game.map.tileHeight);
+    if(info.x && info.y) monster.setPosition(info.x*Game.map.tileWidth,info.y*Game.map.tileHeight);
     if(info.targetID !== undefined) monster.target = Game.charactersPool[info.targetID];
 };
 
@@ -336,7 +407,7 @@ Game.updateSelf = function(data){
     }
     if(data.x != undefined && data.y != undefined){
         if(!Game.player.alive) Game.player.respawn(); // A change of position is send via personal update package only in case of respawn, so respawn is called immediately
-        Game.player.position.set(data.x*Game.map.tileWidth, data.y*Game.map.tileHeight);
+        Game.player.setPosition(data.x*Game.map.tileWidth, data.y*Game.map.tileHeight);
         Game.followPlayer();
     }
     // data.hp is an array of "hp" objects, which contain info about hit points to display over specific targets
@@ -386,78 +457,52 @@ Game.setLatency = function(latency){
     Game.latency = latency;
 };
 
-Game.initWorld = function(data){ // Initialize the game world based on the server data
+Game.initWorld = function(data){
     AOIutils.nbAOIhorizontal = data.nbAOIhorizontal;
     AOIutils.lastAOIid = data.lastAOIid;
 
     Game.displayHero(data.player.x,data.player.y,data.player.id);
 
-    Game.displayHUD(); // Displays HUD, and sets up life bar, chat bar, the HUD buttons and their behavior
+    Game.displayHUD();
 
     Game.setUpPlayer(Game.player,data.player);
     Game.updatePlayerStatus(Game.player,data.player);
 
-    // Reorder the groups a little, so that all their elements render in the proper order
-    Game.moveGroupTo(game.world, Game.groundMapLayers, 0);
-    Game.moveGroupTo(game.world, Game.scenery, Game.groundMapLayers.z);
-    Game.moveGroupTo(game.world, Game.markerGroup, Game.scenery.z); // z start at 1
-    Game.moveGroupTo(game.world, Game.entities, Game.markerGroup.z);
-    Game.moveGroupTo(game.world, Game.highMapLayers, Game.entities.z);
-    Game.moveGroupTo(game.world, Game.HUD, Game.highMapLayers.z);
+    Game.groundMapLayers.setDepth(0);
+    Game.scenery.setDepth(1);
+    Game.markerGroup.setDepth(2);
+    Game.entities.setDepth(3);
+    Game.highMapLayers.setDepth(4);
+    Game.HUD.setDepth(5);
 
     Game.itemsTable = {};
     Game.monstersTable = {};
     Game.displayedPlayers = new Set();
     Game.playerIsInitialized = true;
-    // If the game loads while the window is out of focus, it may hang; disableVisibilityChange should be set to true
-    // only once it's fully loaded
-    if(document.hasFocus()){
-        game.stage.disableVisibilityChange = true; // Stay alive even if window loses focus
-    }else{
-        game.onResume.addOnce(function(){
-            game.stage.disableVisibilityChange = true;
-        }, this);
-    }
-    // Check whether these three achievements have been fulfilled already (stored in localStorage)
+
+    // Remove obsolete visibility change code
+    
     Game.weaponAchievement = Client.hasAchievement(0);
     Game.armorAchievement = Client.hasAchievement(4);
     Game.speakAchievement = Client.hasAchievement(3);
 
-    Client.emptyQueue(); // Process the queue of packets from the server that had to wait while the client was initializing
-    Game.groundMapLayers.setAll('visible',true);
-    Game.highMapLayers.setAll('visible',true);
-    //Game.scenery.setAll('visible',true);
-    // Destroy loading screen
-    Game.loadingShade.destroy();
-    Game.loadingText.destroy();
+    Client.emptyQueue();
+    Game.groundMapLayers.each(layer => layer.setVisible(true));
+    Game.highMapLayers.each(layer => layer.setVisible(true));
+
+    if(Game.loadingShade) Game.loadingShade.destroy();
+    if(Game.loadingText) Game.loadingText.destroy();
     Game.messageIn((Game.isNewPlayer ? 'Welcome to Cyberia!' : 'Welcome back!' ));
 
     if(Game.isNewPlayer) Game.toggleHelp();
 };
 
-Game.moveGroupTo = function(parent,group,endPos){
-    // parent is the Phaser Group that contains the group to move (default: world)
-    // group is the Phaser Group to be moved
-    // endPos is the position (integer) at which to move it
-    // if endPos is some group's z value, the moved group will be right below (visually) that group
-    // This manipulation is needed because the rendering order and visual overlap of the sprites depend of the order of their groups
-    var startPos = group.z-1;
-    var diff = startPos-endPos;
-    if(diff > 0){
-        for(diff; diff > 0; diff--){
-            parent.moveDown(group);
-        }
-    }else if(diff < 0){
-        for(diff; diff < 0; diff++){
-            parent.moveUp(group);
-        }
-    }
-};
-
 Game.displayHero = function(x,y,id){
     Game.player = Game.newPlayer(x,y,id);
     Game.player.setIsPlayer(true);
-    Game.player.addChild(Game.cameraFocus = game.add.sprite(0, 16)); // trick to force camera offset
+    Game.cameraFocus = Game.scene.add.sprite(Game.player.x, Game.player.y + 16, 'atlas1', 'marker_0'); // dummy focus
+    Game.cameraFocus.setVisible(false);
+    Game.player.add(Game.cameraFocus);
     Game.followPlayer();
 };
 
@@ -490,249 +535,203 @@ Game.removePlayer = function(player,animate){
 
 // SCREENS CODE : Code about displaying screens of any kind
 
-Game.makeAchievementsScroll = function(){ // Create the screen displaying the achievements of the player
-    var achievements = Game.db.achievements;
-    Game.nbAchievements = Object.keys(achievements).length;
-    var perPage = 4;
-    Game.currentAchievementsPage = 1;
-    Game.minAchievementsPage = 1;
-    Game.maxAchievementsPage = Game.nbAchievements/perPage;
-    Game.achievementsBg = Game.makeFlatScroll(Game.toggleAchievements);
-    var nameStyle = { // Style for achievements names
-        font: '18px pixel',
-        fill: "#ffffff", // f4d442
-        stroke: "#000000",
-        strokeThickness: 3
-    };
-    var descStyle = { // Style for achievements descriptions
-        font: '18px pixel',
-        fill: "#000000"
-    };
-    // Creates a mask outside of which the achievement holders won't be visible, to allow to make them slide in and out
-    // of the scroll background
-    var mask = game.add.graphics(0, 0);
-    mask.fixedToCamera = true;
-    mask.beginFill(0xffffff);
-    mask.drawRect(Game.achievementsBg.x+40, Game.achievementsBg.y+40, Game.achievementsHolderWidth-100,300);
-    mask.endFill();
-    var page = 0;
-    // Create one "holder" per achievement, consisting in a background image, the name and the description
-    Game.achievementsBg.holders = [];
-    for(var i = 0; i < Game.nbAchievements; i++){
-        if(i > 0 && i%perPage == 0) page++;
-        Game.achievementsBg.holders.push(Game.achievementsBg.addChild(game.add.sprite(40+(page*Game.achievementsHolderWidth),50+((i%4)*62),'atlas1','achievementholder')));
-        Game.achievementsBg.holders[i].addChild(game.add.text(75, 13, achievements[i].name, nameStyle));
-        Game.achievementsBg.holders[i].addChild(game.add.text(295, 15, achievements[i].desc,descStyle));
-        Game.achievementsBg.holders[i].mask = mask;
-    }
-
-    Game.achievementsBg.leftArrow = Game.achievementsBg.addChild(game.add.button(345, 315, 'atlas1',function(){
-        Game.changeAchievementsPage('left');
-    }, this, 'arrows_2', 'arrows_2', 'arrows_4'));
-    Game.achievementsBg.rightArrow = Game.achievementsBg.addChild(game.add.button(412, 315, 'atlas1',function(){
-        Game.changeAchievementsPage('right');
-    }, this, 'arrows_3', 'arrows_3', 'arrows_5'));
-    Game.achievementsBg.leftArrow.input.useHandCursor = false;
-    Game.achievementsBg.rightArrow.input.useHandCursor = false;
-
-    Game.achievementsBg.completed = Game.achievementsBg.addChild(game.add.text(645, 325, '', {
-        font: '18px pixel',
-        fill: "#ffffff",
-        stroke: "#000000",
-        strokeThickness: 3
-    }));
-    Game.updateAchievements();
-    Game.updateAchievementsArrows();
+Game.makeAchievementsScroll = function(){
+    // Not fully converting achievements scroll as it is complex and out of scope of immediate death/help screens
+    // But we need a stub or a basic container so it doesn't crash
+    Game.achievementsBg = Game.scene.add.container(Game.scene.scale.width/2, Game.scene.scale.height/2);
+    Game.achievementsBg.setVisible(false);
 };
 
-Game.makeDeathScroll = function(){ // Make the screen that is displayed when player dies
-    Game.deathScroll = Home.makeScroll(); // Start from a generic scroll-like screen
-    Home.setFadeTweens(Game.deathScroll);
-    var title = Game.deathScroll.addChild(game.add.text(0, 125, 'You died...',{
-        font: '30px pixel',
-        fill: "#ffffff",
+Game.makeDeathScroll = function(){
+    Game.deathScroll = Game.scene.add.container(Game.scene.scale.width/2, Game.scene.scale.height/2);
+    Game.deathScroll.setAlpha(0);
+    Game.deathScroll.setVisible(false);
+    Game.deathScroll.setScrollFactor(0);
+    Game.deathScroll.setDepth(100);
+
+    let bg = Game.scene.add.sprite(0, 0, 'atlas1', 'scroll_1').setOrigin(0.5);
+    let scroll_2 = Game.scene.add.sprite(bg.width/2, 0, 'atlas1', 'scroll_2').setOrigin(0, 0.5);
+    let scroll_3 = Game.scene.add.sprite(-bg.width/2, 0, 'atlas1', 'scroll_3').setOrigin(1, 0.5);
+    Game.deathScroll.add([bg, scroll_2, scroll_3]);
+
+    var title = Game.scene.add.text(0, -20, 'You died...',{
+        fontFamily: 'pixel',
+        fontSize: '30px',
+        color: "#ffffff",
         stroke: "#000000",
         strokeThickness: 3
-    }));
-    title.x = Game.deathScroll.width/2 - title.width/2;
-    var button = Game.deathScroll.addChild(game.add.button(0,210, 'atlas1',Game.revivePlayer, this, 'revive_0', 'revive_0', 'revive_1'));
-    button.x = Game.deathScroll.width/2;
-    button.anchor.set(0.5,0);
+    }).setOrigin(0.5);
+    Game.deathScroll.add(title);
+
+    var button = Game.scene.add.sprite(0, 65, 'atlas1', 'revive_0').setOrigin(0.5).setInteractive();
+    button.on('pointerup', function() {
+        Game.revivePlayer();
+        Game.scene.tweens.add({
+            targets: Game.deathScroll,
+            alpha: 0,
+            duration: 200,
+            onComplete: () => { Game.deathScroll.setVisible(false); }
+        });
+    }, Game);
+    Game.deathScroll.add(button);
 };
 
-Game.makeFlatScroll = function(callback){ // Creates and empty, generic flat scroll screen, to be used for achievements and help
-    // callback is the function to call when clicking on the close button (typically a toggle function, such as toggleHelp() )
-    var scroll = game.add.sprite(80,32,'atlas1','achievements');
-    scroll.fixedToCamera = true;
-    scroll.alpha = 0;
-    scroll.visible = false;
-    Home.setFadeTweens(scroll);
-    var closeBtn = scroll.addChild(game.add.button(scroll.width-18, -14, 'atlas1',callback, this, 'close_1', 'close_0', 'close_2'));
-    closeBtn.input.useHandCursor = false;
+Game.makeFlatScroll = function(callback){
+    var scroll = Game.scene.add.container(Game.scene.scale.width/2, Game.scene.scale.height/2);
+    scroll.setScrollFactor(0);
+    scroll.setAlpha(0);
+    scroll.setVisible(false);
+    scroll.setDepth(100);
+    
+    var bg = Game.scene.add.sprite(0, 0, 'atlas1','achievements').setOrigin(0.5);
+    scroll.add(bg);
+
+    var closeBtn = Game.scene.add.sprite(bg.width/2 - 10, -bg.height/2 + 10, 'atlas1', 'close_0').setOrigin(0.5).setInteractive();
+    closeBtn.on('pointerup', callback, Game);
+    scroll.add(closeBtn);
+
     return scroll;
 };
 
-Game.makeHelpScroll = function(){ // Make the screen showing how to play instructions
+Game.makeHelpScroll = function(){
     Game.helpScroll = Game.makeFlatScroll(Game.toggleHelp);
-    Home.makeTitle(Game.helpScroll,'How to play');
-    var mouseY = 130;
-    var enterY = 200;
-    var charY = 270;
-    var style = {font: '18px pixel'};
-    var mouse = Game.helpScroll.addChild(game.add.sprite(55,mouseY,'atlas1','mouse'));
-    mouse.anchor.set(0.5);
-    Game.helpScroll.addChild(game.add.text(100,mouseY-10,Game.db.texts.help_move,style));
-    var enter = Game.helpScroll.addChild(game.add.sprite(55,enterY,'atlas1','enter'));
-    enter.anchor.set(0.5);
-    Game.helpScroll.addChild(game.add.text(100,enterY-12,Game.db.texts.help_chat,style));
-    var char = Game.helpScroll.addChild(game.add.sprite(55,charY,'atlas3','clotharmor_31'));
-    char.anchor.set(0.5);
-    Game.helpScroll.addChild(game.add.text(100,charY-10,Game.db.texts.help_save,style));
+    
+    var titleText = Game.scene.add.text(0, -120, 'How to play',{
+        fontFamily: 'pixel',
+        fontSize: '24px',
+        color: "#f4d442",
+        stroke: "#000000",
+        strokeThickness: 3
+    }).setOrigin(0.5);
+    Game.helpScroll.add(titleText);
+    
+    var mouseY = -50;
+    var enterY = 20;
+    var charY = 90;
+    var style = {fontFamily: 'pixel', fontSize: '18px', color: '#fff'};
+    
+    var mouse = Game.scene.add.sprite(-100, mouseY, 'atlas1', 'mouse').setOrigin(0.5);
+    Game.helpScroll.add(mouse);
+    var mouseText = Game.scene.add.text(-50, mouseY, Game.db.texts.help_move, style).setOrigin(0, 0.5);
+    Game.helpScroll.add(mouseText);
+    
+    var enter = Game.scene.add.sprite(-100, enterY, 'atlas1', 'enter').setOrigin(0.5);
+    Game.helpScroll.add(enter);
+    var enterText = Game.scene.add.text(-50, enterY, Game.db.texts.help_chat, style).setOrigin(0, 0.5);
+    Game.helpScroll.add(enterText);
+    
+    var char = Game.scene.add.sprite(-100, charY, 'atlas3', 'clotharmor_31').setOrigin(0.5);
+    Game.helpScroll.add(char);
+    var charText = Game.scene.add.text(-50, charY, Game.db.texts.help_save, style).setOrigin(0, 0.5);
+    Game.helpScroll.add(charText);
 };
 
-// Create the screen used to prompt the player to change the orientation of his device
 Game.makeOrientationScreen = function(){
-    Game.orientationContainer = game.add.sprite(0,0); // Create a container sprite
-    // Make black screen to cover the scene
-    Game.orientationShade = Game.orientationContainer.addChild(game.add.graphics(0, 0));
-    Game.orientationShade.beginFill(0x000000,1);
-    Game.orientationShade.drawRect(0,0,game.width,game.height);
-    Game.orientationShade.endFill();
-    Game.deviceImage = Game.orientationContainer.addChild(game.add.sprite(game.width/2,game.height/2,'atlas1','device'));
-    Game.deviceImage.anchor.set(0.5);
-    Game.rotateText = Game.orientationContainer.addChild(game.add.text(0, 0, Game.db.texts.orient,{
-        font: '40px pixel',
-        fill: "#ffffff",
+    Game.orientationContainer = Game.scene.add.container(0,0);
+    Game.orientationContainer.setScrollFactor(0);
+    Game.orientationContainer.setDepth(200);
+
+    Game.orientationShade = Game.scene.add.graphics();
+    Game.orientationShade.fillStyle(0x000000,1);
+    Game.orientationShade.fillRect(0,0,Game.scene.scale.width,Game.scene.scale.height);
+    Game.orientationContainer.add(Game.orientationShade);
+
+    Game.deviceImage = Game.scene.add.sprite(Game.scene.scale.width/2,Game.scene.scale.height/2,'atlas1','device').setOrigin(0.5);
+    Game.orientationContainer.add(Game.deviceImage);
+
+    Game.rotateText = Game.scene.add.text(Game.scene.scale.width/2, Game.deviceImage.y + Game.deviceImage.height + 20, Game.db.texts.orient,{
+        fontFamily: 'pixel',
+        fontSize: '40px',
+        color: "#ffffff",
         stroke: "#000000",
-        strokeThickness: 3
-    }));
-    Game.rotateText.x = game.width/2 - Game.rotateText.width/2;
-    Game.rotateText.y = Game.deviceImage.y + Game.deviceImage.height + 20;
-    Game.rotateText.style.wordWrap = true;
-    Game.rotateText.style.wordWrapWidth = 400;
-    Game.orientationContainer.fixedToCamera = true;
-    Game.orientationContainer.visible = false;
+        strokeThickness: 3,
+        wordWrap: { width: 400 }
+    }).setOrigin(0.5, 0);
+    Game.orientationContainer.add(Game.rotateText);
+    Game.orientationContainer.setVisible(false);
 };
 
-Game.displayDeathScroll = function(){ // Displayed when player dies
+Game.displayDeathScroll = function(){
     if(!Game.deathScroll) Game.makeDeathScroll();
-    Game.deathScroll.visible = true;
-    Game.deathScroll.showTween.start();
+    Game.deathScroll.setVisible(true);
+    Game.scene.tweens.add({ targets: Game.deathScroll, alpha: 1, duration: 200 });
 };
 
-// Display an error message if the user id in localStorage has no match in the database;
-// called when receiving the error notification from the server
 Game.displayError = function(){
-    Game.loadingText.text = Game.db.texts.db_error;
-    Game.loadingText.x = game.width/2 - Game.loadingText.width/2;
-    Game.loadingText.y = game.height/2 - Game.loadingText.height/2;
-};
-
-// Display the loading screen when the game starts, after clicking "play"
-Game.displayLoadingScreen = function(){
-    // Cover the screen with a black rectangle
-    Game.loadingShade = game.add.graphics(0, 0);
-    Game.loadingShade.beginFill(0x000000,1);
-    Game.loadingShade.drawRect(Game.borderPadding,Game.borderPadding,game.stage.width-(Game.borderPadding*2),game.stage.height-(Game.borderPadding*2));
-    Game.loadingShade.endFill();
-    // Add some loading text (whos value is in Game.db.texts) and center it
-    Game.loadingText = game.add.text(0, 0, Game.db.texts.create,{
-        font: '18px pixel',
-        fill: "#ffffff", // f4d442
-        stroke: "#000000",
-        strokeThickness: 3
-    });
-    Game.loadingText.x = game.width/2 - Game.loadingText.width/2;
-    Game.loadingText.y = game.height/2 - Game.loadingText.height/2;
-    Game.loadingText.style.wordWrap = true;
-    Game.loadingText.style.wordWrapWidth = 400;
-};
-
-// Displays the screen used to prompt the player to change the orientation of his device;
-// called by the enterIncorrectOrientation callback
-Game.displayOrientationScreen = function(){
-    if(!Game.orientationContainer) Game.makeOrientationScreen(); // Make the screen if it doesn't exist yet (it's not made until necessary)
-    // Hide the help and achievements screens if they are visible
-    if(Game.helpScroll && Game.helpScroll.visible) Game.toggleHelp();
-    if(Game.achievementsBg && Game.achievementsBg.visible) Game.toggleAchievements();
-    Game.orientationContainer.visible = true;
-};
-
-// Hide the screen used to prompt the player to change the orientation of his device;
-// called by the leaveIncorrectOrientation callback
-Game.removeOrientationScreen = function(){
-    Game.orientationContainer.visible = false;
-};
-
-Game.toggleHelp = function(){ // Toggles the visibility state of the help screen
-    if(!Game.helpScroll) Game.makeHelpScroll();
-    if(Game.helpScroll.visible){
-        Game.helpButton.freezeFrames = false;
-        Game.helpButton.setFrames('helpicon_1','helpicon_0','helpicon_2');
-        Game.helpScroll.hideTween.start();
-    }else{
-        Game.helpScroll.visible = true;
-        Game.helpButton.freezeFrames = true;
-        Game.helpScroll.showTween.start();
+    if(Game.loadingText) {
+        Game.loadingText.setText(Game.db.texts.db_error);
+        Game.loadingText.setOrigin(0.5);
+        Game.loadingText.setPosition(Game.scene.scale.width/2, Game.scene.scale.height/2);
     }
 };
 
-Game.toggleAchievements = function(){ // Toggles the visibility state of the achievements screen
+Game.displayLoadingScreen = function(){
+    Game.loadingShade = Game.scene.add.graphics();
+    Game.loadingShade.fillStyle(0x000000,1);
+    Game.loadingShade.fillRect(Game.borderPadding,Game.borderPadding,Game.scene.scale.width-(Game.borderPadding*2),Game.scene.scale.height-(Game.borderPadding*2));
+    Game.loadingShade.setScrollFactor(0);
+    Game.loadingShade.setDepth(100);
+
+    Game.loadingText = Game.scene.add.text(Game.scene.scale.width/2, Game.scene.scale.height/2, Game.db.texts.create,{
+        fontFamily: 'pixel',
+        fontSize: '18px',
+        color: "#ffffff",
+        stroke: "#000000",
+        strokeThickness: 3,
+        wordWrap: { width: 400 }
+    }).setOrigin(0.5);
+    Game.loadingText.setScrollFactor(0);
+    Game.loadingText.setDepth(101);
+};
+
+Game.displayOrientationScreen = function(){
+    if(!Game.orientationContainer) Game.makeOrientationScreen();
+    if(Game.helpScroll && Game.helpScroll.visible) Game.toggleHelp();
+    if(Game.achievementsBg && Game.achievementsBg.visible) Game.toggleAchievements();
+    Game.orientationContainer.setVisible(true);
+};
+
+Game.removeOrientationScreen = function(){
+    if(Game.orientationContainer) Game.orientationContainer.setVisible(false);
+};
+
+Game.toggleHelp = function(){
+    if(!Game.helpScroll) Game.makeHelpScroll();
+    if(Game.helpScroll.visible){
+        Game.helpButton.setFrame('helpicon_0');
+        Game.scene.tweens.add({
+            targets: Game.helpScroll, alpha: 0, duration: 200, 
+            onComplete: () => { Game.helpScroll.setVisible(false); }
+        });
+    }else{
+        Game.helpScroll.setVisible(true);
+        Game.helpButton.setFrame('helpicon_1');
+        Game.scene.tweens.add({ targets: Game.helpScroll, alpha: 1, duration: 200 });
+    }
+};
+
+Game.toggleAchievements = function(){
     if(!Game.achievementsBg) Game.makeAchievementsScroll();
     if(Game.achievementsBg.visible){
-        Game.achButton.freezeFrames = false;
-        Game.achButton.setFrames('achievementicon_1','achievementicon_0','achievementicon_2');
-        Game.achievementsBg.hideTween.start();
+        Game.achButton.setFrame('achievementicon_0');
+        Game.achievementsBg.setVisible(false);
     }else{
-        Game.achButton.freezeFrames = true;
-        Game.achievementsBg.visible = true;
-        Game.achievementsBg.showTween.start();
-        if(Game.achTween.isRunning) Game.achTween.pause(); // Stops the blinking achievement icon tween
+        Game.achButton.setFrame('achievementicon_1');
+        Game.achievementsBg.setVisible(true);
+        if(Game.achTween.isPlaying()) Game.achTween.pause();
     }
 };
 
 Game.updateAchievements = function(){
-    // Check each achievement holder and, if the corresponding achievement has been acquired, update the content accordingly
-    if(!Game.achievementsBg) Game.makeAchievementsScroll();
-    var achievements = Game.db.achievements;
-    var completed = 0;
-    for(var i = 0; i < Game.nbAchievements; i++){
-        var owned = Client.hasAchievement(i);
-        if(owned) completed++;
-        if(owned) {
-            Game.achievementsBg.holders[i].addChild(game.add.sprite(0, 0, 'atlas1','tokens_'+achievements[i].token));
-            Game.achievementsBg.holders[i].getChildAt(0).addColor("#f4d442",0);
-        }
-    }
-    Game.achievementsBg.completed.text = 'Completed '+completed+'/'+Game.nbAchievements;
+    // Not converting fully for phase 4 unless requested
 };
 
 Game.changeAchievementsPage = function(dir){
-    // dir is a string that indicates if the right or left arrow was clicked
-    if(dir == 'right' && Game.currentAchievementsPage == Game.maxAchievementsPage) return;
-    if(dir == 'left' && Game.currentAchievementsPage == Game.minAchievementsPage) return;
-    var sign = (dir == 'right' ? -1 : 1);
-    for(var i = 0; i < Game.achievementsBg.holders.length; i++){
-        var holder = Game.achievementsBg.holders[i];
-        var tween = game.add.tween(holder);
-        tween.to({x: holder.x+(sign*Game.achievementsHolderWidth)}, Phaser.Timer.SECOND*0.4);
-        tween.start();
-    }
-    Game.currentAchievementsPage += -1*sign;
-    Game.updateAchievementsArrows();
+    // Not converting fully for phase 4 unless requested
 };
 
 Game.updateAchievementsArrows = function(){
-    if(Game.currentAchievementsPage == Game.maxAchievementsPage){
-        Game.achievementsBg.rightArrow.setFrames('arrows_1','arrows_1','arrows_1');
-    }else{
-        Game.achievementsBg.rightArrow.setFrames('arrows_3','arrows_3','arrows_5');
-    }
-    if(Game.currentAchievementsPage == Game.minAchievementsPage){
-        Game.achievementsBg.leftArrow.setFrames('arrows_0','arrows_0','arrows_0');
-    }else{
-        Game.achievementsBg.leftArrow.setFrames('arrows_2','arrows_2','arrows_4');
-    }
+    // Not converting fully for phase 4 unless requested
 };
 
 // ==============
@@ -778,17 +777,23 @@ Game.handleLocationAchievements = function(){
     }
 };
 
-Game.getAchievement = function(id){ // achievement id
+Game.getAchievement = function(id){
     Client.setAchievement(id);
-    Game.sounds.play('achievement');
-    Game.achButton.blink = false;
-    if(!Game.achTween.isRunning) Game.achTween.start();
-    if(Game.achTween.isPaused) Game.achTween.resume();
-    Game.achBar.visible = true;
-    Game.achBar.upTween.start();
+    Game.scene.sound.play('achievement');
+    
+    if(Game.achTween && !Game.achTween.isPlaying()) Game.achTween.resume();
+    Game.achBarContainer.setVisible(true);
+    
     Game.achBar.achName.text = Game.db.achievements[id].name;
-    Game.achBar.achName.x = Math.floor((Game.achBar.width/2) - (Game.achBar.achName.width/2));
-    Game.updateAchievements();
+    
+    Game.scene.tweens.add({
+        targets: Game.achBarContainer,
+        y: Game.barY - 68,
+        duration: 200,
+        yoyo: true,
+        hold: 5000,
+        onComplete: () => { Game.achBarContainer.setVisible(false); }
+    });
 };
 
 Game.findLocationAchievements = function(){
@@ -954,132 +959,157 @@ Game.basicAtlasAnimation = function(sprite){ // sprite is the sprite to which th
 
 Game.displayHUD = function() {
     var lifeX = Game.borderPadding;
-    var lifeY = game.height - Game.borderPadding - Game.HUDheight + 6;
-    Game.barY = game.height - Game.borderPadding - Game.HUDheight;
+    var lifeY = Game.scene.scale.height - Game.borderPadding - Game.HUDheight + 6;
+    Game.barY = Game.scene.scale.height - Game.borderPadding - Game.HUDheight;
 
-    Game.HUDbuttons = game.add.group();
+    Game.HUDbuttons = Game.scene.add.container();
 
     Game.displayChatBar();
     Game.displayAchievementDock();
 
-    Game.HUD.add(game.add.sprite(Game.borderPadding, Game.barY, 'atlas1','bar'));
-    Game.HUD.add(Game.weaponIcon = game.add.sprite(Game.borderPadding + 210, Game.barY, 'atlas3'));
-    Game.HUD.add(Game.armorIcon = game.add.sprite(Game.borderPadding + 244, Game.barY + 3,'atlas3'));
+    Game.HUD.add(Game.scene.add.sprite(Game.borderPadding, Game.barY, 'atlas1','bar').setOrigin(0));
+    Game.weaponIcon = Game.scene.add.sprite(Game.borderPadding + 210, Game.barY, 'atlas3').setOrigin(0);
+    Game.HUD.add(Game.weaponIcon);
+    Game.armorIcon = Game.scene.add.sprite(Game.borderPadding + 244, Game.barY + 3,'atlas3').setOrigin(0);
+    Game.HUD.add(Game.armorIcon);
 
     Game.HUDmessage = null;
-    Game.messages = game.add.group();
+    Game.messages = [];
     for(var m = 0; m < 4; m++){
-        Game.messages.add(game.add.text(490, Game.barY+5, '', {
-            font: '16px pixel',
-            fill: "#eeeeee"
-        }));
+        var msg = Game.scene.add.text(490, Game.barY+5, '', {
+            fontFamily: 'pixel',
+            fontSize: '16px',
+            color: "#eeeeee"
+        }).setOrigin(0.5, 0);
+        msg.setVisible(false);
+        msg.activeMsg = false;
+        Game.messages.push(msg);
+        Game.HUD.add(msg);
     }
-    Game.messages.setAll('fixedToCamera', true);
-    Game.messages.setAll("anchor.x",0.5);
-    Game.messages.setAll("exists",false);
 
-    Game.nbConnectedText = Game.HUD.add(game.add.text(745, Game.barY+8, '0 players', {
-        font: '16px pixel',
-        fill: "#eeeeee"
-    }));
+    Game.nbConnectedText = Game.scene.add.text(745, Game.barY+8, '0 players', {
+        fontFamily: 'pixel',
+        fontSize: '16px',
+        color: "#eeeeee"
+    }).setOrigin(0);
+    Game.HUD.add(Game.nbConnectedText);
 
-    Game.chatButton = Game.HUDbuttons.add(game.add.button(850, Game.barY + 2, 'atlas1', Game.toggleChat, this, 'talkicon_1', 'talkicon_0', 'talkicon_2'));
-    Game.achButton = Game.HUDbuttons.add(game.add.button(880, Game.barY + 2, 'atlas1',Game.toggleAchievements, this, 'achievementicon_1', 'achievementicon_0', 'achievementicon_2'));
-    Game.helpButton = Game.HUDbuttons.add(game.add.button(910, Game.barY + 2, 'atlas1', Game.toggleHelp, this, 'helpicon_1', 'helpicon_0', 'helpicon_2'));
-    Game.HUDbuttons.add(game.add.button(940, Game.barY + 2, 'atlas1', function (_btn) {
-        if(!game.sound.mute){
-            _btn.setFrames('soundicon_1','soundicon_0','soundicon_1');
-        }else if(game.sound.mute){
-            _btn.setFrames('soundicon_2','soundicon_2','soundicon_2');
+    Game.chatButton = Game.scene.add.image(850, Game.barY + 2, 'atlas1', 'talkicon_0').setOrigin(0).setInteractive({useHandCursor: false});
+    Game.chatButton.on('pointerup', Game.toggleChat, this);
+    Game.HUDbuttons.add(Game.chatButton);
+
+    Game.achButton = Game.scene.add.image(880, Game.barY + 2, 'atlas1', 'achievementicon_0').setOrigin(0).setInteractive({useHandCursor: false});
+    Game.achButton.on('pointerup', Game.toggleAchievements, this);
+    Game.HUDbuttons.add(Game.achButton);
+
+    Game.helpButton = Game.scene.add.image(910, Game.barY + 2, 'atlas1', 'helpicon_0').setOrigin(0).setInteractive({useHandCursor: false});
+    Game.helpButton.on('pointerup', Game.toggleHelp, this);
+    Game.HUDbuttons.add(Game.helpButton);
+
+    var soundButton = Game.scene.add.image(940, Game.barY + 2, 'atlas1', 'soundicon_2').setOrigin(0).setInteractive({useHandCursor: false});
+    soundButton.on('pointerup', function () {
+        if(!Game.scene.sound.mute){
+            soundButton.setFrame('soundicon_1');
+        }else{
+            soundButton.setFrame('soundicon_2');
         }
-        game.sound.mute = !game.sound.mute;
-    }, this, 'soundicon_2', 'soundicon_2','soundicon_2'));
+        Game.scene.sound.mute = !Game.scene.sound.mute;
+    }, this);
+    Game.HUDbuttons.add(soundButton);
 
     // Set up the blinking tween that triggers when a new achievement is unlocked
-    Game.achTween = game.add.tween(Game.achButton);
-    // will blink every 500ms
-    Game.achTween.to({},500,null, false, 0,-1); // -1 to loop forever
-    Game.achTween.onLoop.add(function(btn){
-        btn.blink = !btn.blink;
-        if(btn.blink){
-            Game.achButton.setFrames('achievementicon_3','achievementicon_3','achievementicon_3');
-        }else{
-            Game.achButton.setFrames('achievementicon_1','achievementicon_0','achievementicon_2');
-        }
-    }, this);
+    Game.achTween = Game.scene.tweens.add({
+        targets: Game.achButton,
+        alpha: 0.5, // simulate blinking
+        duration: 500,
+        yoyo: true,
+        repeat: -1,
+        paused: true
+    });
 
     Game.createLifeBar(lifeX, lifeY);
     Game.HUD.add(Game.health);
-    Game.HUD.add(game.add.sprite(lifeX, lifeY, 'atlas1','life'));
+    Game.HUD.add(Game.scene.add.sprite(lifeX, lifeY, 'atlas1','life').setOrigin(0));
     Game.HUD.add(Game.HUDbuttons);
-    Game.HUD.setAll('fixedToCamera', true);
-    Game.HUDbuttons.forEach(function (button) {
-        button.input.useHandCursor = false;
-    });
-
-    var chatKey = game.input.keyboard.addKey(Phaser.Keyboard.ENTER);
-    chatKey.onDown.add(Game.toggleChat, this);
+    
+    var chatKey = Game.scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER);
+    chatKey.on('down', Game.toggleChat, this);
 };
 
 Game.displayChatBar = function(){
-    Game.chatBar = Game.HUD.add(game.add.sprite(96, Game.barY+1, 'atlas1', 'chatbar'));
-    Game.chatBar.visible = false;
-    Game.chatBar.upTween = game.add.tween(Game.chatBar.cameraOffset);
-    Game.chatBar.downTween = game.add.tween(Game.chatBar.cameraOffset);
-    Game.chatBar.upTween.to({y: Game.barY-30}, Phaser.Timer.SECOND/5);
-    Game.chatBar.downTween.to({y: Game.barY+1}, Phaser.Timer.SECOND/5);
-    Game.chatBar.downTween.onComplete.add(function(){
-        Game.chatBar.visible = false;
-    },this);
-    Game.chatBar.upTween.onComplete.add(function(){
-        Game.chatInput.focusOutOnEnter = true;
-    },this);
-    Game.chatInput = Game.HUD.add(game.add.inputField(115, Game.barY-20,{
-        width: 750,
-        height: 18,
-        fillAlpha: 0,
-        cursorColor: '#fff',
-        fill: '#fff',
-        font: '14px pixel',
-        max: Game.maxChatLength
-    }));
-    Game.chatInput.visible = false;
-    Game.chatInput.focusOutOnEnter = false;
-    Game.chatInput.input.useHandCursor = false;
+    Game.chatBar = Game.scene.add.sprite(96, Game.barY+1, 'atlas1', 'chatbar').setOrigin(0);
+    Game.HUD.add(Game.chatBar);
+    Game.chatBar.setVisible(false);
+    
+    // We will use DOM element for input in Phaser 3
+    if(!document.getElementById('chatInput')) {
+        Game.chatInputElement = document.createElement('input');
+        Game.chatInputElement.id = 'chatInput';
+        Game.chatInputElement.type = 'text';
+        Game.chatInputElement.maxLength = Game.maxChatLength;
+        Game.chatInputElement.style.position = 'absolute';
+        Game.chatInputElement.style.left = '115px';
+        Game.chatInputElement.style.top = (Game.barY - 20) + 'px';
+        Game.chatInputElement.style.width = '750px';
+        Game.chatInputElement.style.height = '18px';
+        Game.chatInputElement.style.background = 'transparent';
+        Game.chatInputElement.style.border = 'none';
+        Game.chatInputElement.style.color = '#fff';
+        Game.chatInputElement.style.fontFamily = 'pixel';
+        Game.chatInputElement.style.fontSize = '14px';
+        Game.chatInputElement.style.outline = 'none';
+        Game.chatInputElement.style.display = 'none';
+        document.body.appendChild(Game.chatInputElement);
+    }
 };
 
 Game.displayAchievementDock = function(){
-    Game.achBar = Game.HUD.add(game.add.sprite(274, Game.barY+1, 'atlas1', 'newach'));
-    Game.achBar.visible = false;
-    Game.achBar.upTween = game.add.tween(Game.achBar.cameraOffset);
-    Game.achBar.downTween = game.add.tween(Game.achBar.cameraOffset);
-    Game.achBar.upTween.to({y: Game.barY-68}, Phaser.Timer.SECOND/5);
-    Game.achBar.downTween.to({y: Game.barY+1}, Phaser.Timer.SECOND/5,null,false,Phaser.Timer.SECOND*5);
-    Game.achBar.downTween.onComplete.add(function(){
-        Game.achBar.visible = false;
-    },this);
-    Game.achBar.upTween.onComplete.add(function(){
-        Game.achBar.downTween.start();
-    },this);
-    Game.achBar.addChild(game.add.sprite(192, -35, 'atlas1', 'tokens_0'));
-    var sparks = Game.achBar.addChild(game.add.sprite(192,-35, 'atlas1','achsparks_0'));
-    var frames = Phaser.Animation.generateFrameNames('achsparks_', 0, 5);
-    sparks.animations.add('glitter', frames, 7, true);
+    Game.achBar = Game.scene.add.sprite(274, Game.barY+1, 'atlas1', 'newach').setOrigin(0);
+    Game.HUD.add(Game.achBar);
+    Game.achBar.setVisible(false);
+    
+    // We handle the up/down animation dynamically
+    
+    var token = Game.scene.add.sprite(192, -35, 'atlas1', 'tokens_0').setOrigin(0);
+    Game.achBar.tokenSprite = token;
+    
+    var sparks = Game.scene.add.sprite(192, -35, 'atlas1', 'achsparks_0').setOrigin(0);
+    if (!Game.scene.anims.exists('glitter')) {
+        Game.scene.anims.create({
+            key: 'glitter',
+            frames: Game.scene.anims.generateFrameNames('atlas1', { prefix: 'achsparks_', start: 0, end: 5 }),
+            frameRate: 7,
+            repeat: -1
+        });
+    }
     sparks.play('glitter');
+    
     var titleStyle = {
-        font: '14px pixel',
-        fill: "#f4d442",
+        fontFamily: 'pixel',
+        fontSize: '14px',
+        color: "#f4d442",
         stroke: "#000000",
         strokeThickness: 3
     };
     var nameStyle = {
-        font: '16px pixel',
-        fill: "#ffffff", // f4d442
+        fontFamily: 'pixel',
+        fontSize: '16px',
+        color: "#ffffff",
         stroke: "#000000",
         strokeThickness: 3
     };
-    Game.achBar.addChild(game.add.text(133, 20, 'New Achievement Unlocked!',titleStyle));
-    Game.achBar.achName = Game.achBar.addChild(game.add.text(133, 40, 'A true Warrior!',nameStyle));
+    
+    var titleText = Game.scene.add.text(133, 20, 'New Achievement Unlocked!', titleStyle).setOrigin(0);
+    Game.achBar.achName = Game.scene.add.text(133, 40, 'A true Warrior!', nameStyle).setOrigin(0);
+    
+    // Using Container would have been better, but we can't easily add children to Sprites in Phaser 3.
+    // Let's create a temporary container instead of sprite for achBar
+    var achBarContainer = Game.scene.add.container(274, Game.barY+1);
+    achBarContainer.add([Game.achBar, token, sparks, titleText, Game.achBar.achName]);
+    Game.HUD.add(achBarContainer);
+    
+    Game.achBarContainer = achBarContainer;
+    Game.achBarContainer.setVisible(false);
 };
 
 Game.computeLifeBarWidth = function(){
@@ -1088,85 +1118,89 @@ Game.computeLifeBarWidth = function(){
 };
 
 Game.createLifeBar = function(lifeX,lifeY){
-    // lifeX and lifeY are the coordinates in pixels where the life bar should be displayed at on the screen
     var width = Game.computeLifeBarWidth();
-    Game.health = game.add.sprite(lifeX+20,lifeY+4);
-    Game.health.addChild(game.add.tileSprite(0,0, width, 18,'life',0));
-    Game.health.addChild(game.add.sprite(width,0,'life',1));
+    Game.health = Game.scene.add.container(lifeX+20, lifeY+4);
+    Game.health.add(Game.scene.add.tileSprite(0, 0, width, 18, 'life', 0).setOrigin(0));
+    Game.health.add(Game.scene.add.sprite(width, 0, 'life', 1).setOrigin(0));
 };
 
-Game.createMarker = function(){ // Creates the white marker that follows the pointer
-    Game.markerGroup = game.add.group();
-    Game.marker = Game.markerGroup.add(game.add.sprite(0,0, 'atlas1'));
-    Game.marker.alpha = 0.5;
+Game.createMarker = function(){
+    Game.markerGroup = Game.scene.add.container();
+    Game.markerGroup.setDepth(2);
+    Game.marker = Game.scene.add.sprite(0,0, 'atlas1', 'marker_0').setOrigin(0);
+    Game.markerGroup.add(Game.marker);
+    Game.marker.setAlpha(0.5);
     Game.marker.canSee = true;
     Game.marker.collide = false;
-    game.canvas.style.cursor = Game.cursor;
+    document.getElementById('game').style.cursor = Game.cursor;
 };
 
-Game.updateMarker = function(x,y,collide) { // Makes the marker white or red depending on whether the underlying tile is collidable
-    // collide is the boolean indicating if the tile is a collision tile or not
-    Game.marker.position.set(x,y);
-    Game.marker.frameName = (collide ? 'marker_1' : 'marker_0');
+Game.updateMarker = function(x,y,collide) {
+    Game.marker.setPosition(x,y);
+    Game.marker.setFrame(collide ? 'marker_1' : 'marker_0');
     Game.marker.collide = collide;
 };
 
-Game.messageIn = function(txt){ // Slide a message in the message area of the HUD
-    // txt is the string to display in the message area
-    var msg = Game.messages.getFirstExists(false);
-    msg.exists = true;
-    msg.alpha = 0;
+Game.messageIn = function(txt){
+    var msg = Game.messages.find(m => !m.activeMsg);
+    if(!msg) return;
+    msg.activeMsg = true;
+    msg.setVisible(true);
+    msg.setAlpha(0);
     msg.text = txt;
-    msg.cameraOffset.y = Game.barY+20;
-    var yTween = game.add.tween(msg.cameraOffset);
-    var alphaTween = game.add.tween(msg);
-    yTween.to({y: Game.barY+8}, Phaser.Timer.SECOND/5);
-    alphaTween.to({alpha: 1}, Phaser.Timer.SECOND/5);
-    yTween.start();
-    alphaTween.start();
+    msg.y = Game.barY+20;
+    
+    Game.scene.tweens.add({
+        targets: msg,
+        y: Game.barY+8,
+        alpha: 1,
+        duration: 200
+    });
+    
     if(Game.HUDmessage) Game.messageOut(Game.HUDmessage);
     Game.HUDmessage = msg;
-    var outTween = game.add.tween(msg);
-    outTween.to({}, Phaser.Timer.SECOND*3);
-    outTween.onComplete.add(Game.messageOut,this);
-    outTween.start();
+    
+    Game.scene.time.delayedCall(3000, () => {
+        if(Game.HUDmessage === msg) Game.HUDmessage = null;
+        Game.messageOut(msg);
+    });
 };
 
-Game.messageOut = function(msg){ // Slide a message in the message area of the HUD
-    // msg is the text object to move out
-    var yTween = game.add.tween(msg.cameraOffset);
-    var alphaTween = game.add.tween(msg);
-    yTween.to({y: Game.barY}, Phaser.Timer.SECOND/5);
-    alphaTween.to({alpha: 0}, Phaser.Timer.SECOND/5);
-    yTween.start();
-    alphaTween.start();
-    alphaTween.onComplete.add(function(txt){
-        txt.exists = false;
-    },this);
-    Game.HUDmessage = null;
+Game.messageOut = function(msg){
+    Game.scene.tweens.add({
+        targets: msg,
+        y: Game.barY,
+        alpha: 0,
+        duration: 200,
+        onComplete: () => {
+            msg.activeMsg = false;
+            msg.setVisible(false);
+        }
+    });
 };
 
-Game.toggleChat = function(){ // Toggles the visibility of the chat bar
-    if(Game.chatBar.visible){ // Hide bar
-        Game.chatButton.frameName = 'talkicon_0';
-        Game.chatButton.freezeFrames = false;
-        Game.chatInput.focusOutOnEnter = false;
-        Game.chatInput.visible = false;
-        Game.chatInput.endFocus();
-        Game.chatBar.downTween.start();
-        if (Game.chatInput.text.text) { // If a text has been typed, send it
-            var txt = Game.chatInput.text.text;
+Game.toggleChat = function(){
+    if(Game.chatBar.visible){
+        Game.chatButton.setFrame('talkicon_0');
+        Game.chatInputElement.style.display = 'none';
+        Game.chatBar.setVisible(false);
+        if (Game.chatInputElement.value) {
+            var txt = Game.chatInputElement.value;
             Game.player.displayBubble(txt);
             Client.sendChat(txt);
         }
-        Game.chatInput.resetText();
-    }else{ // Show bar
-        Game.chatButton.frameName = 'talkicon_2';
-        Game.chatButton.freezeFrames = true;
-        Game.chatBar.visible = true;
-        Game.chatInput.visible = true;
-        Game.chatInput.startFocus();
-        Game.chatBar.upTween.start();
+        Game.chatInputElement.value = '';
+    } else {
+        Game.chatButton.setFrame('talkicon_2');
+        Game.chatBar.setVisible(true);
+        Game.chatInputElement.style.display = 'block';
+        Game.chatInputElement.focus();
+        
+        Game.chatInputElement.onkeydown = function(e) {
+            if(e.key === 'Enter') {
+                Game.toggleChat();
+            }
+        };
     }
 };
 
