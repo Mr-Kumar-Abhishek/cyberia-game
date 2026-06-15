@@ -7,12 +7,6 @@
 + Client.socket = io.connect('http://localhost:8081');
 ```
 
-- run mongodb:
-
-```
-npm run start:db
-```
-
 - run server:
 
 ```
