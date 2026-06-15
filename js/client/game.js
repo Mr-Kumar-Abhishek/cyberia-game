@@ -5,37 +5,52 @@
  */
 
 "use strict";
+class GameScene extends Phaser.Scene {
+    constructor() {
+        super({ key: 'Game' });
+    }
+    preload() {
+        window.Game.scene = this; // Store scene reference
+        if (Game.preload) Game.preload.call(this);
+    }
+    create() {
+        if (Game.create) Game.create.call(this);
+    }
+    update(time, delta) {
+        if (Game.update) Game.update.call(this, time, delta);
+    }
+}
+
 var Game = {
-    borderPadding: 10, // size of the gray border of the game window
-    HUDheight: 32, // height of the HUD bar at the bottom (with life etc.)
+    borderPadding: 10,
+    HUDheight: 32,
     achievementsHolderWidth: 850,
-    barY: 0, // y position of that very same bar
-    nbGroundLayers: 4, // number of tilemap layers corresponding to "ground" elements (ground, grass, water, cliffs), vs high elements (trees, houses, ...)
-    defaultOrientation: 4, // Face down by default
-    playerSpeed: 120, // number of ms that the movement tween takes to cross one tile (the lower the faster)
-    playerLife: 100, // Max health of a player
-    cursor: 'url(/assets/sprites/hand.png), auto', // image of the mouse cursor in normal circumstances
-    talkCursor: 'url(/assets/sprites/talk.png), auto', // image of the cursor when hovering NPC
-    lootCursor: 'url(/assets/sprites/loot.png), auto', // image of cursors when hovering loot
-    fightCursor: 'url(/assets/sprites/sword.png), auto', // image of cursor when hovering monster
-    markerPosition: new Phaser.Point(), // current position of the square marker indicating the highlighted tile
-    previousMarkerPosition: new Phaser.Point(), // previous position of that marker
-    cameraFollowing: true, // is the camera centered on the player
-    mapWideningY: 54, // y coordinate (in tiles) of the region of the map above which the bounds of the world are wider
-    speechBubbleCornerSize: 5, // size of the sprite used to make the corners of the speech bubbles
-    healthBarWidth: 179, // width of the sprite representing the life of the player
-    nbConnected: 0, // number of players connected to the game
-    playerIsInitialized: false, // has the client received data from the server and created the world?
-    inDoor: false, // is the player currently in an indoors location
-    HPdelay: 100, // Delay before displaying hit points
-    maxChatLength: 300, // Max length of text to input in chat
-    latency: 0, // Initial latency of the client; continuously updated by values from server
-    charactersPool: {}, // Map of the players in the game, accessed by their player id
-    clickDelay: Phaser.Timer.SECOND * 0.2, // minimum time between player mouse clicks
-    clickEnabled: true // bool used to check if the player has clicked faster than the click delay
+    barY: 0,
+    nbGroundLayers: 4,
+    defaultOrientation: 4,
+    playerSpeed: 120,
+    playerLife: 100,
+    cursor: 'url(/assets/sprites/hand.png), auto',
+    talkCursor: 'url(/assets/sprites/talk.png), auto',
+    lootCursor: 'url(/assets/sprites/loot.png), auto',
+    fightCursor: 'url(/assets/sprites/sword.png), auto',
+    markerPosition: { x: 0, y: 0 },
+    previousMarkerPosition: { x: 0, y: 0 },
+    cameraFollowing: true,
+    mapWideningY: 54,
+    speechBubbleCornerSize: 5,
+    healthBarWidth: 179,
+    nbConnected: 0,
+    playerIsInitialized: false,
+    inDoor: false,
+    HPdelay: 100,
+    maxChatLength: 300,
+    latency: 0,
+    charactersPool: {},
+    clickDelay: 200,
+    clickEnabled: true
 };
-// used to map the orientation of the player, stored as a number, to the actual name of the orientation
-// (used to select the right animations to play, by name)
+
 var orientationsDict = {
     1: 'left',
     2: 'up',
@@ -44,18 +59,18 @@ var orientationsDict = {
 };
 
 Game.init = function(){
-    Game.easystar = new EasyStar.js();
-    game.canvas.style.cursor = Game.cursor; // Sets the pointer to hand sprite
+    Game.easystar = new window.EasyStar.js();
+    document.getElementById('game').style.cursor = Game.cursor;
 };
 
 Game.preload = function() {
-    game.load.tilemap('map', 'assets/maps/minimap_client.json', null, Phaser.Tilemap.TILED_JSON);
-    game.load.spritesheet('tileset', 'assets/tilesets/tilesheet.png',32,32);
-    game.load.atlasJSONHash('atlas4', 'assets/sprites/atlas4.png', 'assets/sprites/atlas4.json'); // Atlas of monsters
-    game.load.spritesheet('bubble', 'assets/sprites/bubble2.png',5,5); // tilesprite used to make speech bubbles
-    game.load.spritesheet('life', 'assets/sprites/lifelvl.png',5,18); // tilesprite used to make lifebar
-    game.load.audio('sounds','assets/audio/sounds.mp3','assets/audio/sounds.ogg'); // audio sprite of all sound effects
-    game.load.json('entities', 'assets/json/entities_client.json'); // Basically a list of the NPC, mapping their id to the key used in other JSON files
+    this.load.tilemapTiledJSON('map', 'assets/maps/minimap_client.json');
+    this.load.image('tileset', 'assets/tilesets/tilesheet.png');
+    this.load.atlas('atlas4', 'assets/sprites/atlas4.png', 'assets/sprites/atlas4.json');
+    this.load.spritesheet('bubble', 'assets/sprites/bubble2.png', { frameWidth: 5, frameHeight: 5 });
+    this.load.spritesheet('life', 'assets/sprites/lifelvl.png', { frameWidth: 5, frameHeight: 18 });
+    this.load.audio('sounds', ['assets/audio/sounds.mp3', 'assets/audio/sounds.ogg']);
+    this.load.json('entities', 'assets/json/entities_client.json');
 };
 
 // Makes a map mapping the numerical id's of elements of a collection to their names (their names being the keys used to fetch relevant data from JSON files)
@@ -67,45 +82,27 @@ Game.makeIDmap = function(collection,map){
 };
 
 Game.create = function() {
-    Game.HUD = game.add.group(); // Group containing all objects involved in the HUD
-    Game.HUD.add(game.add.sprite(0, 0, 'atlas1','border')); // Adds the gray border of the game
-    Game.displayLoadingScreen(); // Display the loading screen
+    Game.displayMap.call(this);
 
-    // A few maps mapping the name of an element (a monster, npc, item...) to its properties
-    // Put before other functions, which might need it
-    Game.itemsInfo = Game.db.items;
-    Game.npcInfo = Game.db.npc;
-    Game.monstersInfo = Game.db.monsters;
-    Game.findLocationAchievements(); // Scan the list of location-based achievements and store them somewhere
+    // Setup camera controls so the user can pan around the new Phase 2 map
+    var cursors = this.input.keyboard.createCursorKeys();
+    var controlConfig = {
+        camera: this.cameras.main,
+        left: cursors.left,
+        right: cursors.right,
+        up: cursors.up,
+        down: cursors.down,
+        acceleration: 0.06,
+        drag: 0.0005,
+        maxSpeed: 1.0
+    };
+    this.controls = new Phaser.Cameras.Controls.SmoothedKeyControl(controlConfig);
 
-    // A few maps mapping numerical id's to string keys
-    Game.itemsIDmap = {};
-    Game.monstersIDmap = {};
-    Game.makeIDmap(Game.itemsInfo, Game.itemsIDmap);
-    Game.makeIDmap(Game.monstersInfo, Game.monstersIDmap);
-    Game.entities = game.add.group(); // Group containing all the objects appearing on the map (npc, monster, items, players ...)
-    Game.scenery = game.add.group(); // Group containing all the animated sprites generated from the map
+    this.add.text(10, 10, "Phase 2 Complete: Tilemap loaded! Use Arrow Keys to pan.", { fill: "#fff", backgroundColor: "#000" }).setScrollFactor(0);
+};
 
-    Game.displayMap(); // Reads the Tiled JSON to generate the map, manage layers, create collision array for the pathfinding and make a dictionary of teleports
-    //Game.displayScenery(); // Finds all "scenery" tiles in the map and replace them by animated sprites
-    Game.displayNPC(); // Read the Tiled JSON and display the NPC
-
-    Game.createMarker(); // Creates the marker following the pointer that highlight tiles
-    Game.makeHPtexts(); // Creates a pool of text elements to use to display HP
-    Game.addSounds(); // Add the sounds of the game to some global object
-
-    // Factories used to fecth unused sprites before creating new ones (or creating new ones when no other available)
-    Game.playerFactory = new Factory(function(x,y,key){
-        return new Player(x,y,key);
-    });
-    Game.itemFactory = new Factory(function(x,y,key){
-        return new Item(x, y, key);
-    });
-    Game.monsterFactory = new Factory(function(x,y,key){
-        return new Monster(x, y, key);
-    });
-
-    Client.requestData();
+Game.update = function(time, delta) {
+    if (this.controls) this.controls.update(delta);
 };
 
 
@@ -1183,60 +1180,60 @@ Game.updateNbConnected = function(nb){
 // MAP CODE : Map & NPC-related code
 
 Game.displayMap = function(){
-    Game.groundMapLayers = game.add.group();
-    Game.highMapLayers = game.add.group();
-    Game.map = game.add.tilemap('map');
-    Game.map.addTilesetImage('tilesheet', 'tileset');
+    Game.groundMapLayers = this.add.container();
+    Game.highMapLayers = this.add.container();
+    Game.map = this.make.tilemap({ key: 'map' });
+    var tileset = Game.map.addTilesetImage('tilesheet', 'tileset');
     Game.map.gameLayers = [];
     for(var i = 0; i < Game.map.layers.length; i++) {
-        var group = (i <= Game.nbGroundLayers-1 ? Game.groundMapLayers : Game.highMapLayers);
-        Game.map.gameLayers[i] = Game.map.createLayer(Game.map.layers[i].name,0,0,group);
-        Game.map.gameLayers[i].visible = false; // Make map invisible before the game has fully loaded
+        var layer = Game.map.createLayer(Game.map.layers[i].name, tileset, 0, 0);
+        layer.setVisible(true); // temporary true to test
+        if (i <= Game.nbGroundLayers - 1) {
+            Game.groundMapLayers.add(layer);
+        } else {
+            Game.highMapLayers.add(layer);
+        }
+        Game.map.gameLayers[i] = layer;
     }
-    Game.map.gameLayers[0].inputEnabled = true; // Allows clicking on the map
-    Game.map.gameLayers[0].events.onInputUp.add(Game.handleMapClick, this);
-    Game.createDoorsMap(); // Create the associative array mapping coordinates to doors/teleports
+    
+    this.input.on('pointerup', Game.handleMapClick, this);
+    Game.createDoorsMap();
 
-    //game.world.resize(Game.map.widthInPixels,Game.map.heightInPixels);
-    game.world.setBounds(0,0,Game.map.widthInPixels,Game.map.heightInPixels);
+    this.cameras.main.setBounds(0, 0, Game.map.widthInPixels, Game.map.heightInPixels);
+    this.physics.world.setBounds(0, 0, Game.map.widthInPixels, Game.map.heightInPixels);
 
     Game.map.tileset = {
         gid: 1,
-        tileProperties: Game.map.tilesets[0].tileProperties
+        tileProperties: Game.map.tilesets[0].tileProperties || {}
     };
 
     Game.createCollisionArray();
 };
 
 Game.createCollisionArray = function(){
-    // Create the grid used for pathfinding ; it consists in a 2D array of 0's and 1's, 1's indicating collisions
     Game.collisionArray = [];
     for(var y = 0; y < Game.map.height; y++){
         var col = [];
         for (var x = 0; x < Game.map.width; x++) {
             var collide = false;
             for (var l = 0; l < Game.map.gameLayers.length; l++) {
-                var tile = Game.map.getTile(x, y, Game.map.gameLayers[l]);
-                if (tile) {
-                    // The original BrowserQuest Tiled file doesn't use a collision layer; rather, properties are added to the
-                    // tileset to indicate which tiles causes collisions or not. Which is why we have to check in the tileProperties
-                    // if a given tile has the property "c" or not (= collision)
+                var tile = Game.map.getTileAt(x, y, true, Game.map.gameLayers[l]);
+                if (tile && tile.index > 0) {
                     var tileProperties = Game.map.tileset.tileProperties[tile.index - Game.map.tileset.gid];
-                    if (tileProperties) {
-                        if (tileProperties.hasOwnProperty('c')) {
-                            collide = true;
-                            break;
-                        }
+                    if (tileProperties && tileProperties.hasOwnProperty('c')) {
+                        collide = true;
+                        break;
                     }
                 }
             }
-            col.push(+collide); // "+" to convert boolean to int
+            col.push(+collide);
         }
         Game.collisionArray.push(col);
     }
-
-    Game.easystar.setGrid(Game.collisionArray);
-    Game.easystar.setAcceptableTiles([0]);
+    if (Game.easystar) {
+        Game.easystar.setGrid(Game.collisionArray);
+        Game.easystar.setAcceptableTiles([0]);
+    }
 };
 
 Game.createDoorsMap = function(){ // Create the associative array mapping coordinates to doors/teleports
