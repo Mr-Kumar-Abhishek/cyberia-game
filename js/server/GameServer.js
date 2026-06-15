@@ -36,7 +36,7 @@ var GameServer = {
 module.exports.GameServer = GameServer;
 module.exports.randomInt = randomInt;
 
-var ObjectId = require('mongodb').ObjectID;
+var ObjectId = require('mongodb').ObjectId;
 var spaceMap = require('../spaceMap.js').spaceMap;
 var ChestArea = require('./chestarea.js').ChestArea;
 var AOIutils = require('../AOIutils.js').AOIutils;
@@ -265,28 +265,34 @@ GameServer.addNewPlayer = function(socket,data){
     if(!data.name || data.name.length == 0) return;
     var player = new Player(data.name);
     var document = player.dbTrim();
-    GameServer.server.db.collection('players').insertOne(document,function(err){
-        if(err) throw err;
-        var mongoID = document._id.toString(); // The Mongo driver for NodeJS appends the _id field to the original object reference
-        player.setIDs(mongoID,socket.id);
-        GameServer.finalizePlayer(socket,player);
-        GameServer.server.sendID(socket,mongoID);
-    });
+    GameServer.server.db.collection('players').insertOne(document)
+        .then(function() {
+            var mongoID = document._id.toString(); // The Mongo driver for NodeJS appends the _id field to the original object reference
+            player.setIDs(mongoID,socket.id);
+            GameServer.finalizePlayer(socket,player);
+            GameServer.server.sendID(socket,mongoID);
+        })
+        .catch(function(err) {
+            throw err;
+        });
 };
 
 GameServer.loadPlayer = function(socket,id){
-    GameServer.server.db.collection('players').findOne({_id: new ObjectId(id)},function(err,doc){
-        if(err) throw err;
-        if(!doc) {
-            GameServer.server.sendError(socket);
-            return;
-        }
-        var player = new Player();
-        var mongoID = doc._id.toString();
-        player.setIDs(mongoID,socket.id);
-        player.getDataFromDb(doc);
-        GameServer.finalizePlayer(socket,player);
-    });
+    GameServer.server.db.collection('players').findOne({_id: new ObjectId(id)})
+        .then(function(doc) {
+            if(!doc) {
+                GameServer.server.sendError(socket);
+                return;
+            }
+            var player = new Player();
+            var mongoID = doc._id.toString();
+            player.setIDs(mongoID,socket.id);
+            player.getDataFromDb(doc);
+            GameServer.finalizePlayer(socket,player);
+        })
+        .catch(function(err) {
+            throw err;
+        });
 };
 
 GameServer.finalizePlayer = function(socket,player){
@@ -317,17 +323,18 @@ GameServer.savePlayer = function(player){
     // Save the progress of a player
     GameServer.server.db.collection('players').updateOne(
         {_id: new ObjectId(player.getMongoID())},
-        {$set: player.dbTrim() },
-        function(err){
-            if(err) throw err;
+        {$set: player.dbTrim() }
+    ).catch(function(err){
+        throw err;
     });
     player.setLastSavedPosition();
 };
 
 GameServer.deletePlayer = function(id){
-    GameServer.server.db.collection('players').deleteOne({_id: new ObjectId(id)},function(err){
-        if(err) throw err;
-    });
+    GameServer.server.db.collection('players').deleteOne({_id: new ObjectId(id)})
+        .catch(function(err){
+            throw err;
+        });
 };
 
 GameServer.removePlayer = function(socketID){

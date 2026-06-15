@@ -50,7 +50,7 @@ app.get('/',function(req,res){
 });
 
 // Manage command line arguments
-var myArgs = require('optimist').argv;
+var myArgs = require('yargs')(process.argv.slice(2)).argv;
 var mongoHost, mongoDBName;
 
 function sleep(milliseconds) {
@@ -84,11 +84,14 @@ server.listen(myArgs.p || process.env.PORT || 8081,function(){ // -p flag to spe
     gs.readMap();
     server.setUpdateLoop();
 
-    mongo.connect('mongodb://'+mongoHost,function(err, client){
-        if(err) throw(err);
-        server.db = client.db('phaserQuest');
-        console.log('Connection to db established');
-    });
+    mongo.connect('mongodb://'+mongoHost)
+        .then(function(client){
+            server.db = client.db('phaserQuest');
+            console.log('Connection to db established');
+        })
+        .catch(function(err){
+            throw(err);
+        });
 });
 
 io.on('connection',function(socket){
@@ -202,7 +205,7 @@ server.getShortStamp = function(){
 };
 
 server.getSocket = function(id){
-    return io.sockets.connected[id]; // won't work if the socket is subscribed to a namespace, because the namsepace will be part of the id
+    return io.sockets.sockets.get(id); // won't work if the socket is subscribed to a namespace, because the namsepace will be part of the id
 };
 
 server.quickMedian = function(arr){ // Compute the median of an array using the quickselect algorithm

@@ -30,13 +30,13 @@
   "license": "MIT",
   "homepage": "https://github.com/Jerenaux/phaserquest#readme",
   "dependencies": {
-    "clone": "^2.1.0",
-    "express": "^4.14.0",
-    "mongodb": "^3.6.1",
-    "optimist": "^0.6.1",
+    "clone": "^2.1.2",
+    "express": "^4.19.2",
+    "mongodb": "^6.5.0",
     "pathfinding": "^0.4.18",
-    "quickselect": "^1.0.0",
-    "random-weighted-choice": "^0.1.3",
-    "socket.io": "^1.7.2"
+    "quickselect": "^1.1.1",
+    "random-weighted-choice": "^0.1.4",
+    "socket.io": "^4.7.5",
+    "yargs": "^17.7.2"
   }
 }
