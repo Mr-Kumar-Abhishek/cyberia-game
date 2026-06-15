@@ -28,7 +28,8 @@ var express = require('express');
 var app = express();
 var server = require('http').Server(app);
 var io = require('socket.io')(server);
-var mongo = require('mongodb').MongoClient;
+var sqlite3 = require('sqlite3');
+var { open } = require('sqlite');
 var quickselect = require('quickselect'); // Used to compute the median for latency
 
 var mapFormat = require('./js/server/format.js');
@@ -51,7 +52,6 @@ app.get('/',function(req,res){
 
 // Manage command line arguments
 var myArgs = require('yargs')(process.argv.slice(2)).argv;
-var mongoHost, mongoDBName;
 
 function sleep(milliseconds) {
     console.log('Waiting for database - start: ' + new Date().getTime());
@@ -68,15 +68,7 @@ if(myArgs.waitForDatabase) {
     sleep(myArgs.waitForDatabase);
 }
 
-if(myArgs.heroku){ // --heroku flag to behave according to Heroku's specs
-    mongoHost = 'heroku_4tv68zls:'+myArgs.pass+'@ds141368.mlab.com:41368';
-    mongoDBName = 'heroku_4tv68zls';
-}else {
-    var mongoPort = (myArgs.mongoPort || 27017);
-    var mongoServer = (myArgs.mongoServer || 'localhost');
-    mongoHost = mongoServer+':'+mongoPort;
-    mongoDBName = 'phaserQuest';
-}
+// MongoDB logic removed; using local SQLite database instead
 
 server.listen(myArgs.p || process.env.PORT || 8081,function(){ // -p flag to specify port ; the env variable is needed for Heroku
     console.log('Listening on '+server.address().port);
@@ -84,14 +76,26 @@ server.listen(myArgs.p || process.env.PORT || 8081,function(){ // -p flag to spe
     gs.readMap();
     server.setUpdateLoop();
 
-    mongo.connect('mongodb://'+mongoHost)
-        .then(function(client){
-            server.db = client.db('phaserQuest');
-            console.log('Connection to db established');
-        })
-        .catch(function(err){
-            throw(err);
-        });
+    open({
+        filename: './database.sqlite',
+        driver: sqlite3.Database
+    }).then(async function(db) {
+        server.db = db;
+        await db.exec(`
+            CREATE TABLE IF NOT EXISTS players (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT,
+                x INTEGER,
+                y INTEGER,
+                weapon TEXT,
+                armor TEXT
+            )
+        `);
+        console.log('Connection to sqlite db established');
+    }).catch(function(err) {
+        console.error('Failed to connect to sqlite db', err);
+        throw err;
+    });
 });
 
 io.on('connection',function(socket){

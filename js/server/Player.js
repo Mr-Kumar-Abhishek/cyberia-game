@@ -36,7 +36,7 @@ Player.prototype.setIDs = function(dbId,socketId){
     this.socketID = socketId;
 };
 
-Player.prototype.getMongoID = function(){
+Player.prototype.getDbID = function(){
     return GameServer.IDmap[this.id];
 };
 

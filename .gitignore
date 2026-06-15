@@ -5,3 +5,5 @@ stdEU.pem
 EU-Frankfurt.pem
 Procfile
 *.pem
+database.sqlite
+database.sqlite-*
