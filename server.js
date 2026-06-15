@@ -27,7 +27,7 @@
 var express = require('express');
 var app = express();
 var server = require('http').Server(app);
-var io = require('socket.io').listen(server);
+var io = require('socket.io')(server);
 var mongo = require('mongodb').MongoClient;
 var quickselect = require('quickselect'); // Used to compute the median for latency
 
