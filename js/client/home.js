@@ -51,7 +51,7 @@ Home.displayHomeScroll = function(){
 };
 
 Home.displayLogo = function(){
-    Home.logo = game.add.sprite(0, 20, 'atlas1', 'logo');
+    Home.logo = game.add.text(0, 20, 'CYBERIA', { font: "80px Impact", fill: "#f1c40f", stroke: "#c0392b", strokeThickness: 10, shadowOffsetX: 5, shadowOffsetY: 5, shadowColor: "rgba(0,0,0,0.5)", shadowBlur: 5 });
     Home.logo.anchor.set(0.5,0);
     Home.logo.x = game.width/2;
     Home.logo.hideTween = game.add.tween(Home.logo);
