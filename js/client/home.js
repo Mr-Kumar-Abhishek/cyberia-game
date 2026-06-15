@@ -1,3 +1,21 @@
+class HomeScene extends Phaser.Scene {
+    constructor() {
+        super({ key: 'Home' });
+    }
+    init() {
+        if (Home.init) Home.init.call(this);
+    }
+    preload() {
+        if (Home.preload) Home.preload.call(this);
+    }
+    create() {
+        if (Home.create) Home.create.call(this);
+    }
+    update() {
+        if (Home.update) Home.update.call(this);
+    }
+}
+
 window.Home = {
     maxNameLength: 20
 };

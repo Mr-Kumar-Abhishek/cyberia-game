@@ -16,7 +16,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Jerenaux/phaserquest"
+    "url": "git+https://github.com/Jerenaux/phaserquest.git"
   },
   "keywords": [
     "Browserquest",
@@ -33,11 +33,16 @@
     "express": "^4.19.2",
     "pathfinding": "^0.4.18",
     "phaser": "^4.1.0",
+    "puppeteer": "^25.1.0",
     "quickselect": "^1.1.1",
     "random-weighted-choice": "^0.1.4",
     "socket.io": "^4.7.5",
     "sqlite": "^5.1.1",
     "sqlite3": "^6.0.1",
     "yargs": "^17.7.2"
+  },
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Jerenaux/phaserquest/issues"
   }
 }

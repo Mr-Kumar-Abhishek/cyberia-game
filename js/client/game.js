@@ -9,6 +9,9 @@ class GameScene extends Phaser.Scene {
     constructor() {
         super({ key: 'Game' });
     }
+    init() {
+        if (Game.init) Game.init.call(this);
+    }
     preload() {
         window.Game.scene = this; // Store scene reference
         if (Game.preload) Game.preload.call(this);
