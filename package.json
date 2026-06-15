@@ -1,5 +1,5 @@
 {
-  "name": "phaserquest",
+  "name": "cyberia",
   "version": "1.0.0",
   "description": "Clone of Mozilla's BrowserQuest with the Phaser engine",
   "main": "server.js",

@@ -21,7 +21,7 @@ npm run client:dev
 
 ### Edting the map
 
-- open `assets/maps/phaserquest_map.tmx` in Tiles-1.1.6
+- open `assets/maps/cyberia_map.tmx` in Tiles-1.1.6
 - edit the map and export as json to `assets/maps/map.json`
 - format json map:
 
