@@ -80,12 +80,14 @@ Home.makeHomeScroll = function() {
         Home.inputElement.type = 'text';
         Home.inputElement.placeholder = 'Name your character';
         Home.inputElement.maxLength = Home.maxNameLength;
-        Home.inputElement.style.position = 'absolute';
-        Home.inputElement.style.top = '250px';
-        Home.inputElement.style.left = '400px';
         Home.inputElement.style.width = '200px';
         Home.inputElement.style.padding = '5px';
-        document.getElementById('game').appendChild(Home.inputElement);
+        Home.inputElement.style.fontSize = '16px';
+        Home.inputElement.style.fontFamily = 'pixel';
+        Home.inputElement.style.outline = 'none';
+        
+        Home.domElement = this.add.dom(0, 50, Home.inputElement);
+        this.scroll.add(Home.domElement);
 
         buttonY = 100;
     } else {
@@ -97,20 +99,34 @@ Home.makeHomeScroll = function() {
         buttonY = 80;
     }
 
-    Home.button = this.add.sprite(0, buttonY, 'atlas1', 'play_0').setInteractive();
+    Home.button = this.add.sprite(0, buttonY, 'atlas1', 'play_0').setInteractive({ useHandCursor: true });
     Home.button.on('pointerdown', () => { Home.startGame.call(this); });
     this.scroll.add(Home.button);
+    
+    if (Game.isNewPlayer) {
+        Home.warningText = this.add.text(0, buttonY + 30, 'Please enter a name!', { font: '14px pixel', fill: '#ff0000' }).setOrigin(0.5);
+        Home.warningText.setVisible(false);
+        this.scroll.add(Home.warningText);
+    }
 };
 
 Home.startGame = function() {
     let ok = true;
     if (Game.isNewPlayer) {
-        if (Home.inputElement && Home.inputElement.value.length > 0) {
-            Client.setName(Home.inputElement.value);
-            Home.inputElement.remove();
+        if (Home.inputElement && Home.inputElement.value.trim().length > 0) {
+            Client.setName(Home.inputElement.value.trim());
+            if(Home.domElement) {
+                Home.domElement.destroy();
+                Home.domElement = null;
+            }
             Home.inputElement = null;
+            if(Home.warningText) Home.warningText.setVisible(false);
         } else {
             ok = false;
+            if(Home.warningText) {
+                Home.warningText.setVisible(true);
+                this.tweens.add({ targets: Home.warningText, alpha: 0, duration: 100, yoyo: true, repeat: 3 });
+            }
         }
     }
     if (ok) {
