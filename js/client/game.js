@@ -864,40 +864,52 @@ Game.computeFinalOrientation = function(path){ // path is a list of cells
 
 // Convert pixel coordinates into tiles coordinates (e.g. 96, 32 becomes 3, 1)
 Game.computeTileCoords = function(x,y){
-    var layer = Game.map.gameLayers[0];
-    return new Phaser.Point(layer.getTileX(x),layer.getTileY(y));
+    return new Phaser.Math.Vector2(Math.floor(x / Game.map.tileWidth), Math.floor(y / Game.map.tileHeight));
 };
 
 // Returns the rectangle corresponding to the view of the camera (not counting HUD, the actual view of the world)
 Game.computeView = function(){
-    Game.view = new Phaser.Rectangle(game.camera.x + Game.borderPadding, game.camera.y + Game.borderPadding,
-        game.camera.width - Game.borderPadding*2, game.camera.height - Game.borderPadding*2 - Game.HUDheight);
+    var cam = Game.scene.cameras.main;
+    Game.view = new Phaser.Geom.Rectangle(cam.worldView.x + Game.borderPadding, cam.worldView.y + Game.borderPadding,
+        cam.width - Game.borderPadding*2, cam.height - Game.borderPadding*2 - Game.HUDheight);
 };
 
 Game.checkCameraBounds = function(){
     // Due to the shape of the map, the bounds of the camera cannot always be the same; north of some Y coordinate (Game.mapWideningY),
     // the width of the bounds has to increase, from 92 to 113.
     var pos = Game.computeTileCoords(Game.player.x,Game.player.y);
-    if(Game.cameraFollowing && pos.y <= Game.mapWideningY && game.camera.bounds.width == 92*Game.map.tileWidth){
+    var cam = Game.scene.cameras.main;
+    if(Game.cameraFollowing && pos.y <= Game.mapWideningY && cam._customBoundsWidth == 92*Game.map.tileWidth){
         Game.tweenCameraBounds(113);
-    }else if(Game.cameraFollowing && pos.y > Game.mapWideningY && game.camera.bounds.width == 113*Game.map.tileWidth){
+    }else if(Game.cameraFollowing && pos.y > Game.mapWideningY && cam._customBoundsWidth == 113*Game.map.tileWidth){
         Game.tweenCameraBounds(92);
     }
 };
 
 Game.tweenCameraBounds = function(width){
     // width is the width in pixels of the camera bounds that should be tweened to
-    var tween = game.add.tween(Game.camera.bounds);
-    tween.to({width: width*Game.map.tileWidth}, 1500,null, false, 0);
-    tween.start();
+    var cam = Game.scene.cameras.main;
+    cam._customBoundsWidth = width*Game.map.tileWidth;
+    Game.scene.tweens.add({
+        targets: cam._bounds,
+        width: width*Game.map.tileWidth,
+        duration: 1500,
+        onUpdate: function() {
+            cam.setBounds(cam._bounds.x, cam._bounds.y, cam._bounds.width, cam._bounds.height);
+        }
+    });
 };
 
 Game.followPlayer = function(){ // Make the camera follow the player, within the appropriate bounds
     Game.inDoor = false;
+    var cam = Game.scene.cameras.main;
     // Rectangle to which the camera is bound, cannot move outside it
     var width = (Game.player.x >= 92 ? 113 : 92);
-    game.camera.bounds = new Phaser.Rectangle(Game.map.tileWidth-Game.borderPadding,Game.map.tileWidth-Game.borderPadding,width*Game.map.tileWidth,311*Game.map.tileWidth);
-    game.camera.follow(Game.cameraFocus);
+    cam._customBoundsWidth = width*Game.map.tileWidth;
+    cam._bounds = new Phaser.Geom.Rectangle(Game.map.tileWidth-Game.borderPadding,Game.map.tileWidth-Game.borderPadding,width*Game.map.tileWidth,311*Game.map.tileWidth);
+    cam.setBounds(cam._bounds.x, cam._bounds.y, cam._bounds.width, cam._bounds.height);
+    cam.startFollow(Game.cameraFocus);
+
     Game.cameraFollowing = true;
 };
 
@@ -942,19 +954,51 @@ Game.addSounds = function(){
 
 // Sets up basic, single-orientation animations for scenic animated sprites
 Game.basicAnimation = function(sprite){ // sprite is the sprite to which the animation should be applied
-    var frames = [];
-    for(var m = 0; m < sprite.nbFrames; m++){ // Generate the list of frames of the animations based on the initial frame and the total number of frames
-        frames.push(sprite.frame+m);
+    var animKey = sprite.texture.key + '_idle_' + sprite.frame.name;
+    if (!Game.scene.anims.exists(animKey)) {
+        var frames = [];
+        var texture = Game.scene.textures.get(sprite.texture.key);
+        for(var m = 0; m < sprite.nbFrames; m++){ 
+            var fName = parseInt(sprite.frame.name)+m;
+            if (texture.has(fName)) {
+                frames.push({ key: sprite.texture.key, frame: fName });
+            }
+        }
+        if (frames.length > 0) {
+            Game.scene.anims.create({
+                key: animKey,
+                frames: frames,
+                frameRate: sprite.rate || 10,
+                repeat: -1
+            });
+        }
     }
-    sprite.animations.add('idle', frames, sprite.rate, true);
-    sprite.animations.play('idle');
+    if (Game.scene.anims.exists(animKey)) {
+        sprite.play(animKey);
+    }
 };
 
 // Same but using atlas frames
 Game.basicAtlasAnimation = function(sprite){ // sprite is the sprite to which the animation should be applied
     // sprite, nbFrames, ... are absorbed from npc.json when a new NPC() is created
-    sprite.animations.add('idle', Phaser.Animation.generateFrameNames(sprite.atlasKey+'_', 0, 0+sprite.nbFrames-1), sprite.rate, true);
-    sprite.animations.play('idle');
+    var animKey = sprite.texture.key + '_' + sprite.atlasKey + '_idle';
+    if (!Game.scene.anims.exists(animKey)) {
+        var frames = Game.scene.anims.generateFrameNames(sprite.texture.key, { prefix: sprite.atlasKey+'_', start: 0, end: sprite.nbFrames-1 });
+        var texture = Game.scene.textures.get(sprite.texture.key);
+        frames = frames.filter(function(f) { return texture.has(f.frame); });
+        
+        if (frames.length > 0) {
+            Game.scene.anims.create({
+                key: animKey,
+                frames: frames,
+                frameRate: sprite.rate || 10,
+                repeat: -1
+            });
+        }
+    }
+    if (Game.scene.anims.exists(animKey)) {
+        sprite.play(animKey);
+    }
 };
 
 //======================
@@ -1237,7 +1281,6 @@ Game.displayMap = function(){
     Game.createDoorsMap();
 
     this.cameras.main.setBounds(0, 0, Game.map.widthInPixels, Game.map.heightInPixels);
-    this.physics.world.setBounds(0, 0, Game.map.widthInPixels, Game.map.heightInPixels);
 
     Game.map.tileset = {
         gid: 1,
@@ -1275,19 +1318,35 @@ Game.createCollisionArray = function(){
 
 Game.createDoorsMap = function(){ // Create the associative array mapping coordinates to doors/teleports
     Game.doors = new spaceMap();
-    for (var d = 0; d < Game.map.objects.doors.length; d++) {
-        var door = Game.map.objects.doors[d];
+    var doorsLayer = Game.map.getObjectLayer('doors');
+    if (!doorsLayer || !doorsLayer.objects) return;
+    
+    for (var d = 0; d < doorsLayer.objects.length; d++) {
+        var door = doorsLayer.objects[d];
         var position = Game.computeTileCoords(door.x, door.y);
+        
+        // Phaser 3 parses custom properties either as an object or array of {name, value}
+        // depending on Tiled map version. The puppeteer log showed an object in this map.
+        var props = door.properties || {};
+        // If properties is an array (newer Tiled), convert it to object for compatibility
+        if (Array.isArray(props)) {
+            var newProps = {};
+            for (var p = 0; p < props.length; p++) {
+                newProps[props[p].name] = props[p].value;
+            }
+            props = newProps;
+        }
+
         Game.doors.add(position.x, position.y, {
-            to: new Phaser.Point(door.properties.x * Game.map.tileWidth, door.properties.y * Game.map.tileWidth), // Where does the door teleports to
-            camera: (door.properties.hasOwnProperty('cx') ? new Phaser.Point(door.properties.cx * Game.map.tileWidth, door.properties.cy * Game.map.tileWidth): null), // If set, will lock the camera at these coordinates (use for indoors locations)
-            orientation: door.properties.o, // What should be the orientation of the player after teleport
-            follow: door.properties.hasOwnProperty('follow'), // Should the camera keep following the player, even if indoors (automatically yes if outdoors)
+            to: new Phaser.Math.Vector2(parseInt(props.x) * Game.map.tileWidth, parseInt(props.y) * Game.map.tileHeight), // Where does the door teleports to
+            camera: (props.hasOwnProperty('cx') ? new Phaser.Math.Vector2(parseInt(props.cx) * Game.map.tileWidth, parseInt(props.cy) * Game.map.tileHeight): null), // If set, will lock the camera at these coordinates (use for indoors locations)
+            orientation: props.o, // What should be the orientation of the player after teleport
+            follow: props.hasOwnProperty('follow'), // Should the camera keep following the player, even if indoors (automatically yes if outdoors)
             // Below are the camera bounds in case of indoors following
-            min_cx: door.properties.min_cx,
-            min_cy: door.properties.min_cy,
-            max_cx: door.properties.max_cx,
-            max_cy: door.properties.max_cy
+            min_cx: props.min_cx !== undefined ? parseInt(props.min_cx) : null,
+            min_cy: props.min_cy !== undefined ? parseInt(props.min_cy) : null,
+            max_cx: props.max_cx !== undefined ? parseInt(props.max_cx) : null,
+            max_cy: props.max_cy !== undefined ? parseInt(props.max_cy) : null
         });
     }
 };
@@ -1545,16 +1604,16 @@ Game.markerHasMoved = function(){
 };
 
 Game.sortEntities = function(){ // Sort the members of the "entities" group according to their y value, so that they overlap nicely
-    Game.entities.sort('y', Phaser.Group.SORT_ASCENDING);
+    Game.entities.sort('y');
 };
 
 Game.update = function(){ // Main update loop of the client
     if(!Game.playerIsInitialized) return;
-    var cell = Game.computeTileCoords(game.input.activePointer.worldX, game.input.activePointer.worldY);
+    var cell = Game.computeTileCoords(Game.scene.input.activePointer.worldX, Game.scene.input.activePointer.worldY);
     Game.markerPosition.x = cell.x * Game.map.tileWidth;
     Game.markerPosition.y = cell.y * Game.map.tileWidth;
 
-    if(Game.chatInput.visible && !Game.chatInput.focus) Game.toggleChat(); // Trick to make the chat react to pressing "enter"
+    if(Game.chatInput && Game.chatInput.visible && !Game.chatInput.focus) Game.toggleChat(); // Trick to make the chat react to pressing "enter"
 
     if(Game.player.hasMoved()) Game.checkCameraBounds();
 

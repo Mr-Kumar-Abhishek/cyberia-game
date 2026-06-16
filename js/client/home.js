@@ -33,6 +33,16 @@ Home.preload = function() {
 
 Home.create = function() {
     Game.db = this.cache.json.get('db');
+    Game.itemsInfo = Game.db.items;
+    Game.itemsIDmap = {};
+    Object.keys(Game.itemsInfo).forEach(function(key) {
+        Game.itemsIDmap[Game.itemsInfo[key].id] = key;
+    });
+    Game.monstersInfo = Game.db.monsters;
+    Game.monstersIDmap = {};
+    Object.keys(Game.monstersInfo).forEach(function(key) {
+        Game.monstersIDmap[Game.monstersInfo[key].id] = key;
+    });
     this.music = this.sound.add('intro');
     this.music.play();
 
